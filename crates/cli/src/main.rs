@@ -1,4 +1,6 @@
+use opal_core::Task;
+
 #[tokio::main]
 async fn main() {
-    println!("{}", starter_core::add(1, 2))
+    println!("{:#?}", Task { name: "Test".to_string(), depends: vec![], steps: vec![] });
 }

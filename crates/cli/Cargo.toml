@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 tokio = { workspace = true }
-starter-core = { workspace = true }
+opal-core = { workspace = true }

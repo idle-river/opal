@@ -3,5 +3,5 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.dependencies]
-tokio = { version = "1.53.1", features = ["full"] }
-starter-core = { path = "./crates/core" }
+tokio = { version = "1.53.3", features = ["full"] }
+opal-core = { path = "./crates/core" }

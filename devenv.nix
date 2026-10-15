@@ -1,11 +1,4 @@
 {
-  pkgs,
-  ...
-}:
-
-{
-  packages = with pkgs; [ cargo-watch ];
-
   languages.rust = {
     enable = true;
     lsp.enable = true;
