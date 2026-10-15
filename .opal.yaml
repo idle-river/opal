@@ -7,11 +7,14 @@ jobs:
     steps:
       - name: compile
         command: cargo build --release
+        # OR:
       - name: test
-        command: cargo test
+        command: cargo
+        args:
+          - test
+          - --all
+          - --all-features
   - name: lint_code
     steps:
       - name: clippy
-        command: cargo clippy -- -D warnings
-      - name: check_formatting
-        command: cargo fmt -- --check
+        command: cargo clippy

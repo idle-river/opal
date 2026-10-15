@@ -32,10 +32,10 @@ async fn main() {
 
             let mut engine = ExecutionEngine::default();
 
-            engine
-                .init_program(prog)
-                .await
-                .expect("Failed to exec program");
+            if let Err(error) = engine.init_program(prog).await {
+                eprintln!("Program execution failed: {error}");
+                process::exit(1);
+            }
         }
     }
 }
