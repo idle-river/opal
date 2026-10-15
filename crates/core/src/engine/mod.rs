@@ -1,4 +1,4 @@
-use crate::{Task, config::Program};
+use crate::{Error, Task, config::Program};
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 
@@ -13,20 +13,25 @@ pub enum ExecState {
     TimedOut,
 }
 
-struct RunningTask<'a> {
-    task: &'a Task,
+struct RunningTask {
+    task: Task,
     state: ExecState,
 }
 
-pub struct ExecutionEngine<'a> {
-    sender: mpsc::Sender<RunningTask<'a>>,
+pub struct ExecutionEngine {
+    sender: mpsc::Sender<RunningTask>,
 }
 
-impl<'a> ExecutionEngine<'a> {
+impl Default for ExecutionEngine {
+    fn default() -> Self {
+        Self::new(4, 100) // Default to 4 concurrent jobs and a buffer size of 100
+    }
+}
+
+impl ExecutionEngine {
     pub fn new(max_concurrent_jobs: usize, buffer_size: usize) -> Self {
         let (tx, mut rx) = mpsc::channel::<RunningTask>(buffer_size);
         let semaphore = Arc::new(Semaphore::new(max_concurrent_jobs));
-        let engine = ExecutionEngine { sender: tx };
 
         // Background dispatcher task
         tokio::spawn(async move {
@@ -35,24 +40,26 @@ impl<'a> ExecutionEngine<'a> {
                 let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
 
                 tokio::spawn(async move {
-                    engine.execute_job(job).await;
+                    execute_job(job).await;
                     drop(permit); // Release slot when done
                 });
             }
         });
 
-        engine
+        ExecutionEngine { sender: tx }
     }
 
-    pub fn init_program(&mut self, prog: Program) {
+    pub fn init_program(&mut self, _prog: Program) {
         unimplemented!()
     }
 
-    fn enqueue(&mut self) {
-        unimplemented!()
+    async fn enqueue(&mut self, job: RunningTask) -> Result<(), Error> {
+        self.sender.send(job).await.map_err(|e| {
+            Box::new(std::io::Error::other(format!("failed to enqueue job: {e}"))) as Error
+        })
     }
+}
 
-    async fn execute_job(job: &<_>RunningTask) {
-        unimplemented!()
-    }
+async fn execute_job(job: RunningTask) {
+    unimplemented!()
 }

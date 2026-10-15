@@ -30,7 +30,7 @@ async fn main() {
                 })
             };
 
-            let engine = ExecutionEngine::new();
+            let engine = ExecutionEngine::default();
 
             println!("{:#?}", prog);
         }
