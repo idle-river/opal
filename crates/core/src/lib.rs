@@ -1,12 +1,18 @@
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "config", derive(serde::Serialize, serde::Deserialize))]
 pub struct Task {
     pub name: String,
-    pub depends: Vec<String>,
     pub steps: Vec<Step>,
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "config", derive(serde::Serialize, serde::Deserialize))]
 pub struct Step {
     pub name: String,
     pub command: String,
 }
+
+pub type Error = Box<dyn std::error::Error>;
+
+#[cfg(feature = "config")]
+pub mod config;
