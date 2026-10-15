@@ -16,3 +16,4 @@ default = []
 config = ["dep:serde", "dep:serde_yaml"]
 
 engine = ["config", "dep:tokio"]
+streaming = ["engine"]
