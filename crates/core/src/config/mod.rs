@@ -6,7 +6,6 @@ use std::path::Path;
 pub struct Program {
     pub name: String,
     pub jobs: Vec<Task>,
-    pub depends: Vec<String>, // Other Programs
 }
 
 impl Program {

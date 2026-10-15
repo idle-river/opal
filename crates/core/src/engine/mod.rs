@@ -2,7 +2,7 @@ use crate::{Error, Step, Task, config::Program};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::task::JoinSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogStream {
@@ -37,12 +37,11 @@ struct RunningTask {
     program_name: String,
     task: Task,
     state: ExecState,
-    completion: Option<oneshot::Sender<Result<(), String>>>,
     callback: Option<LogCallback>,
 }
 
 pub struct ExecutionEngine {
-    sender: mpsc::Sender<RunningTask>,
+    max_concurrent_jobs: usize,
 }
 
 impl Default for ExecutionEngine {
@@ -53,57 +52,14 @@ impl Default for ExecutionEngine {
 
 impl ExecutionEngine {
     pub fn new(max_concurrent_jobs: usize, buffer_size: usize) -> Self {
-        let (tx, mut rx) = mpsc::channel::<RunningTask>(buffer_size);
-        let semaphore = Arc::new(Semaphore::new(max_concurrent_jobs));
-
-        // Background dispatcher task
-        tokio::spawn(async move {
-            while let Some(job) = rx.recv().await {
-                // Acquire permit before spawning worker task
-                let permit = Arc::clone(&semaphore).acquire_owned().await.unwrap();
-
-                tokio::spawn(async move {
-                    let result = execute_job(job).await;
-                    if let Some(completion) = result.1 {
-                        let _ = completion.send(result.0);
-                    }
-                    drop(permit); // Release slot when done
-                });
-            }
-        });
-
-        ExecutionEngine { sender: tx }
+        let _ = buffer_size;
+        ExecutionEngine {
+            max_concurrent_jobs: max_concurrent_jobs.max(1),
+        }
     }
 
     pub async fn init_program(&mut self, prog: Program) -> Result<(), Error> {
-        let mut completions = Vec::with_capacity(prog.jobs.len());
-
-        for task in prog.jobs {
-            let (completion, result) = oneshot::channel();
-            let running_task = RunningTask {
-                program_name: prog.name.clone(),
-                task,
-                state: ExecState::Pending,
-                completion: Some(completion),
-                callback: None,
-            };
-
-            // Enqueue the task for execution
-            self.enqueue(running_task).await?;
-            completions.push(result);
-        }
-
-        for completion in completions {
-            let result = completion.await.map_err(|_| {
-                Box::new(std::io::Error::other("job executor stopped unexpectedly")) as Error
-            })?;
-
-            if let Err(message) = result {
-                return Err(Box::new(std::io::Error::other(message)));
-            }
-        }
-
-        Ok(())
+        self.run_program(prog, None).await
     }
 
     pub async fn init_program_streaming(
@@ -111,49 +67,96 @@ impl ExecutionEngine {
         prog: Program,
         callback: LogCallback,
     ) -> Result<(), Error> {
-        let mut completions = Vec::with_capacity(prog.jobs.len());
+        self.run_program(prog, Some(callback)).await
+    }
 
+    async fn run_program(&self, prog: Program, callback: Option<LogCallback>) -> Result<(), Error> {
+        use std::collections::HashMap;
+
+        let mut pending = HashMap::new();
         for task in prog.jobs {
-            let (completion, result) = oneshot::channel();
-            let running_task = RunningTask {
-                program_name: prog.name.clone(),
-                task,
-                state: ExecState::Pending,
-                completion: Some(completion),
-                callback: Some(Arc::clone(&callback)),
-            };
-
-            self.enqueue(running_task).await?;
-            completions.push(result);
+            if pending.insert(task.name.clone(), task).is_some() {
+                return Err(Box::new(std::io::Error::other("job names must be unique")));
+            }
         }
-
-        for completion in completions {
-            let result = completion.await.map_err(|_| {
-                Box::new(std::io::Error::other("job executor stopped unexpectedly")) as Error
-            })?;
-
-            if let Err(message) = result {
-                return Err(Box::new(std::io::Error::other(message)));
+        for task in pending.values() {
+            for dependency in &task.depends {
+                if !pending.contains_key(dependency) {
+                    return Err(Box::new(std::io::Error::other(format!(
+                        "job '{}' depends on unknown job '{}'",
+                        task.name, dependency
+                    ))));
+                }
             }
         }
 
-        Ok(())
-    }
+        let mut completed = HashMap::new();
+        let mut running = JoinSet::new();
+        let mut first_error = None;
 
-    async fn enqueue(&mut self, job: RunningTask) -> Result<(), Error> {
-        self.sender.send(job).await.map_err(|e| {
-            Box::new(std::io::Error::other(format!("failed to enqueue job: {e}"))) as Error
-        })
+        while !pending.is_empty() || !running.is_empty() {
+            let ready = pending
+                .values()
+                .filter(|task| task.depends.iter().all(|name| completed.contains_key(name)))
+                .map(|task| task.name.clone())
+                .collect::<Vec<_>>();
+
+            for name in ready {
+                let task = pending.remove(&name).expect("ready job must be pending");
+                if let Some(error) =
+                    task.depends
+                        .iter()
+                        .find_map(|dependency| match completed.get(dependency) {
+                            Some(Err(error)) => Some(error),
+                            _ => None,
+                        })
+                {
+                    let message = format!("skipped because dependency failed: {error}");
+                    completed.insert(name, Err(message.clone()));
+                    first_error.get_or_insert(message);
+                } else if running.len() < self.max_concurrent_jobs {
+                    let program_name = prog.name.clone();
+                    let task_name = task.name.clone();
+                    let task_callback = callback.clone();
+                    running.spawn(async move {
+                        (
+                            task_name,
+                            execute_job(RunningTask {
+                                program_name,
+                                task,
+                                state: ExecState::Pending,
+                                callback: task_callback,
+                            })
+                            .await,
+                        )
+                    });
+                } else {
+                    pending.insert(name, task);
+                }
+            }
+
+            if let Some(result) = running.join_next().await {
+                let (name, result) = result.map_err(|error| {
+                    Box::new(std::io::Error::other(format!(
+                        "job executor failed: {error}"
+                    ))) as Error
+                })?;
+                if let Err(error) = &result {
+                    first_error.get_or_insert(error.clone());
+                }
+                completed.insert(name, result);
+            } else if !pending.is_empty() {
+                return Err(Box::new(std::io::Error::other(
+                    "job dependencies contain a cycle",
+                )));
+            }
+        }
+
+        first_error.map_or(Ok(()), |error| Err(Box::new(std::io::Error::other(error))))
     }
 }
 
-async fn execute_job(
-    mut job: RunningTask,
-) -> (
-    Result<(), String>,
-    Option<oneshot::Sender<Result<(), String>>>,
-) {
-    let completion = job.completion.take();
+async fn execute_job(mut job: RunningTask) -> Result<(), String> {
     job.state = ExecState::Running;
 
     for step in &job.task.steps {
@@ -172,7 +175,7 @@ async fn execute_job(
                 let message = format!("failed to execute with error: {e}");
                 emit(&job, &step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
-                return (Err(message), completion);
+                return Err(message);
             }
         };
 
@@ -202,19 +205,19 @@ async fn execute_job(
                 let message = format!("failed with status: {status}");
                 emit(&job, &step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
-                return (Err(message), completion);
+                return Err(message);
             }
             Err(e) => {
                 let message = format!("failed to wait for process: {e}");
                 emit(&job, &step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
-                return (Err(message), completion);
+                return Err(message);
             }
         }
     }
 
     job.state = ExecState::Success;
-    (Ok(()), completion)
+    Ok(())
 }
 
 async fn stream_output<R>(
@@ -316,6 +319,22 @@ mod tests {
     use super::{ExecutionEngine, LogEvent, command_parts};
     use crate::{Step, Task, config::Program};
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    fn task(name: &str, depends: &[&str], command: &str) -> Task {
+        Task {
+            name: name.to_owned(),
+            depends: depends
+                .iter()
+                .map(|dependency| (*dependency).to_owned())
+                .collect(),
+            steps: vec![Step {
+                name: "step".to_owned(),
+                command: command.to_owned(),
+                args: None,
+            }],
+        }
+    }
 
     #[test]
     fn parses_executable_and_inline_arguments() {
@@ -356,9 +375,9 @@ mod tests {
         });
         let program = Program {
             name: "program".to_owned(),
-            depends: Vec::new(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
                     command: "printf streamed-output".to_owned(),
@@ -387,9 +406,9 @@ mod tests {
         });
         let program = Program {
             name: "program".to_owned(),
-            depends: Vec::new(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
                     command: "false".to_owned(),
@@ -406,5 +425,79 @@ mod tests {
         assert!(events.lock().unwrap().iter().any(|event| {
             event.stream == super::LogStream::Stderr && event.message.contains("failed with status")
         }));
+    }
+
+    #[tokio::test]
+    async fn runs_independent_jobs_concurrently() {
+        let program = Program {
+            name: "program".to_owned(),
+            jobs: vec![
+                task("first", &[], "sleep 0.2"),
+                task("second", &[], "sleep 0.2"),
+            ],
+        };
+        let started = Instant::now();
+
+        ExecutionEngine::new(2, 1)
+            .init_program(program)
+            .await
+            .unwrap();
+
+        assert!(
+            started.elapsed() < Duration::from_millis(350),
+            "independent jobs did not run concurrently"
+        );
+    }
+
+    #[tokio::test]
+    async fn waits_for_dependencies_before_running_a_job() {
+        let marker = std::env::temp_dir().join(format!("opal-dependency-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let marker_path = marker.to_string_lossy();
+        let program = Program {
+            name: "program".to_owned(),
+            jobs: vec![
+                task("first", &[], &format!("touch {marker_path}")),
+                task("second", &["first"], &format!("test -f {marker_path}")),
+            ],
+        };
+
+        ExecutionEngine::new(2, 1)
+            .init_program(program)
+            .await
+            .unwrap();
+
+        assert!(marker.exists());
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[tokio::test]
+    async fn does_not_run_job_when_a_dependency_fails() {
+        let events: Arc<Mutex<Vec<LogEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let received_events = Arc::clone(&events);
+        let callback = Arc::new(move |event| {
+            received_events.lock().unwrap().push(event);
+        });
+        let program = Program {
+            name: "program".to_owned(),
+            jobs: vec![
+                task("first", &[], "false"),
+                task("second", &["first"], "printf should-not-run"),
+            ],
+        };
+
+        assert!(
+            ExecutionEngine::new(2, 1)
+                .init_program_streaming(program, callback)
+                .await
+                .is_err()
+        );
+        assert!(
+            !events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| event.message == "should-not-run")
+        );
     }
 }
