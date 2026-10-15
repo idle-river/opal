@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.dependencies]
+tokio = { version = "1.53.1", features = ["full"] }
+starter-core = { path = "./crates/core" }
