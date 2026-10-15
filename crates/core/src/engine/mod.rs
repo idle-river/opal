@@ -14,6 +14,7 @@ pub enum ExecState {
 }
 
 struct RunningTask {
+    program_name: String,
     task: Task,
     state: ExecState,
 }
@@ -49,8 +50,18 @@ impl ExecutionEngine {
         ExecutionEngine { sender: tx }
     }
 
-    pub fn init_program(&mut self, _prog: Program) {
-        unimplemented!()
+    pub async fn init_program(&mut self, prog: Program) -> Result<(), Error> {
+        for task in prog.jobs {
+            let running_task = RunningTask {
+                program_name: prog.name.clone(),
+                task,
+                state: ExecState::Pending,
+            };
+
+            // Enqueue the task for execution
+            self.enqueue(running_task).await?;
+        }
+        Ok(())
     }
 
     async fn enqueue(&mut self, job: RunningTask) -> Result<(), Error> {
@@ -60,6 +71,38 @@ impl ExecutionEngine {
     }
 }
 
-async fn execute_job(job: RunningTask) {
-    unimplemented!()
+async fn execute_job(mut job: RunningTask) {
+    use tokio::process::Command;
+    job.state = ExecState::Running;
+
+    for step in job.task.steps {
+        let mut cmd = Command::new(&step.command);
+        cmd.args(&step.args);
+
+        match cmd.output().await {
+            Ok(output) => {
+                if output.status.success() {
+                    println!(
+                        "Program: {}, Task: {}, Step: {} executed successfully.",
+                        job.program_name, job.task.name, step.name
+                    );
+                } else {
+                    eprintln!(
+                        "Program: {}, Task: {}, Step: {} failed with status: {}",
+                        job.program_name, job.task.name, step.name, output.status
+                    );
+                    job.state = ExecState::Failed;
+                    return;
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "Program: {}, Task: {}, Step: {} failed to execute with error: {}",
+                    job.program_name, job.task.name, step.name, e
+                );
+                job.state = ExecState::Failed;
+                return;
+            }
+        }
+    }
 }

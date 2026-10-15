@@ -5,8 +5,8 @@ use std::path::Path;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Program {
     pub name: String,
-    jobs: Vec<Task>,
-    depends: Vec<String>, // Other Programs
+    pub jobs: Vec<Task>,
+    pub depends: Vec<String>, // Other Programs
 }
 
 impl Program {

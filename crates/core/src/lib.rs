@@ -10,6 +10,7 @@ pub struct Task {
 pub struct Step {
     pub name: String,
     pub command: String,
+    pub args: Vec<String>,
 }
 
 pub type Error = Box<dyn std::error::Error>;

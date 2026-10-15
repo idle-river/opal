@@ -30,9 +30,12 @@ async fn main() {
                 })
             };
 
-            let engine = ExecutionEngine::default();
+            let mut engine = ExecutionEngine::default();
 
-            println!("{:#?}", prog);
+            engine
+                .init_program(prog)
+                .await
+                .expect("Failed to exec program");
         }
     }
 }
