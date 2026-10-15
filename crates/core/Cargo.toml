@@ -15,4 +15,4 @@ default = []
 # Enabling 'config' activates the optional 'serde' and 'serde_yaml' dependencies
 config = ["dep:serde", "dep:serde_yaml"]
 
-engine = ["dep:tokio"]
+engine = ["config", "dep:tokio"]
