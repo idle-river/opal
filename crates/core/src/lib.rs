@@ -14,5 +14,8 @@ pub struct Step {
 
 pub type Error = Box<dyn std::error::Error>;
 
+#[cfg(feature = "engine")]
+pub mod engine;
+
 #[cfg(feature = "config")]
 pub mod config;

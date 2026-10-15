@@ -7,9 +7,12 @@ edition = "2024"
 # Mark both dependencies as optional so they are not included by default
 serde = { version = "1.0.229", optional = true, features = ["derive"] }
 serde_yaml = { version = "0.9.33", optional = true }
+tokio = { workspace = true, optional = true }
 
 [features]
 default = []
 
 # Enabling 'config' activates the optional 'serde' and 'serde_yaml' dependencies
 config = ["dep:serde", "dep:serde_yaml"]
+
+engine = ["dep:tokio"]

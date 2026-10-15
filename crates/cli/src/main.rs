@@ -13,6 +13,7 @@ async fn main() {
         }
         Cli::Run { file } => {
             use opal_core::config::Program;
+            use opal_core::engine::ExecutionEngine;
 
             let prog = if let Some(f) = file {
                 Program::from_file(&f).unwrap_or_else(|e| {
@@ -28,6 +29,8 @@ async fn main() {
                     process::exit(1)
                 })
             };
+
+            let engine = ExecutionEngine::new();
 
             println!("{:#?}", prog);
         }
