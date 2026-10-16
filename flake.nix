@@ -1,5 +1,5 @@
 {
-  description = "Rust Starter Flake";
+  description = "an concurrent task runner";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
