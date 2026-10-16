@@ -4,13 +4,21 @@ use std::sync::Arc;
 use clap::Parser;
 
 const CONFIG_FILE: &str = ".opal.yaml";
+const SAMPLE_YAML: &str = include_str!("../../../sample.yaml");
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     match cli {
         Cli::Init => {
-            println!("Inititing");
+            use std::fs;
+            let mut opal_yaml_file =
+                std::env::current_dir().expect("Failed to get the current directory.");
+
+            opal_yaml_file.push(CONFIG_FILE);
+
+            fs::write(opal_yaml_file, SAMPLE_YAML)
+                .unwrap_or_else(|e| panic!("Failed to write to file: {e}"));
         }
         Cli::Run { file } => {
             use opal_core::config::Program;
