@@ -21,6 +21,27 @@ pub struct LogEvent {
     pub message: String,
 }
 
+pub fn program_color_seed(program_name: &str) -> u64 {
+    let mut hash = 14695981039346656037_u64;
+    for byte in program_name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211_u64);
+    }
+    hash
+}
+
+pub fn program_color_index(program_name: &str, palette_size: usize) -> usize {
+    if palette_size == 0 {
+        return 0;
+    }
+
+    (program_color_seed(program_name) % palette_size as u64) as usize
+}
+
+pub fn task_color_index(task_name: &str, palette_size: usize) -> usize {
+    program_color_index(task_name, palette_size)
+}
+
 pub type LogCallback = Arc<dyn Fn(LogEvent) + Send + Sync + 'static>;
 
 pub enum ExecState {
@@ -338,7 +359,7 @@ fn command_parts(step: &Step) -> Result<(String, Vec<String>), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutionEngine, LogEvent, command_parts};
+    use super::{ExecutionEngine, LogEvent, command_parts, program_color_index};
     use crate::{Step, Task, config::Program};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -537,5 +558,15 @@ mod tests {
                 .iter()
                 .any(|event| event.message == "should-not-run")
         );
+    }
+
+    #[test]
+    fn program_color_index_is_deterministic_and_bounded() {
+        let first = program_color_index("build", 8);
+        let second = program_color_index("build", 8);
+
+        assert_eq!(first, second);
+        assert!(first < 8);
+        assert_eq!(program_color_index("build", 0), 0);
     }
 }

@@ -1,4 +1,5 @@
 use clap::Parser;
+use colored::*;
 use opal_core::config::Program;
 use std::process;
 use std::sync::Arc;
@@ -12,13 +13,23 @@ async fn main() {
     match cli {
         Cli::Init => {
             use std::fs;
-            let mut opal_yaml_file =
-                std::env::current_dir().expect("Failed to get the current directory.");
+            let mut opal_yaml_file = std::env::current_dir().unwrap_or_else(|_| {
+                eprintln!(
+                    "{}",
+                    "Failed to get the current directory; exiting...".red()
+                );
+                process::exit(1);
+            });
 
             opal_yaml_file.push(CONFIG_FILE);
 
-            fs::write(opal_yaml_file, SAMPLE_YAML)
-                .unwrap_or_else(|e| panic!("Failed to write to file: {e}"));
+            fs::write(opal_yaml_file, SAMPLE_YAML).unwrap_or_else(|e| {
+                eprintln!(
+                    "{}",
+                    format!("Failed to write to {} with this error: {}", CONFIG_FILE, e).red()
+                );
+                process::exit(1);
+            });
         }
         Cli::Run { file } => {
             use opal_core::engine::{ExecutionEngine, LogStream};
@@ -68,10 +79,26 @@ async fn main() {
 }
 
 fn format_event(event: &opal_core::engine::LogEvent) -> String {
+    let program_palette = [
+        Color::Blue,
+        Color::Green,
+        Color::Magenta,
+        Color::Cyan,
+        Color::BrightBlue,
+        Color::BrightGreen,
+        Color::BrightMagenta,
+        Color::BrightCyan,
+        Color::BrightYellow,
+    ];
+
+    let color_index = opal_core::engine::task_color_index(&event.task_name, program_palette.len());
+
     format!(
         "[{}] [{}] [{}] {}",
         event.program_name, event.task_name, event.step_name, event.message
     )
+    .color(program_palette[color_index])
+    .to_string()
 }
 
 #[cfg(test)]
@@ -81,6 +108,8 @@ mod tests {
 
     #[test]
     fn formats_streaming_event_with_program_task_and_step() {
+        colored::control::set_override(false);
+
         let event = LogEvent {
             program_name: "build".to_owned(),
             task_name: "unit_tests".to_owned(),
