@@ -160,11 +160,11 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
     job.state = ExecState::Running;
 
     for step in &job.task.steps {
-        let mut cmd = command_for_step(&step);
+        let mut cmd = command_for_step(step);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         emit(
             &job,
-            &step,
+            step,
             LogStream::Lifecycle,
             format!("executing command: {:?}", cmd),
         );
@@ -173,7 +173,7 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
             Ok(child) => child,
             Err(e) => {
                 let message = format!("failed to execute with error: {e}");
-                emit(&job, &step, LogStream::Stderr, message.clone());
+                emit(&job, step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
                 return Err(message);
             }
@@ -203,13 +203,13 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
             Ok(status) if status.success() => {}
             Ok(status) => {
                 let message = format!("failed with status: {status}");
-                emit(&job, &step, LogStream::Stderr, message.clone());
+                emit(&job, step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
                 return Err(message);
             }
             Err(e) => {
                 let message = format!("failed to wait for process: {e}");
-                emit(&job, &step, LogStream::Stderr, message.clone());
+                emit(&job, step, LogStream::Stderr, message.clone());
                 job.state = ExecState::Failed;
                 return Err(message);
             }
