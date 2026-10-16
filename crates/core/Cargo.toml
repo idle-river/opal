@@ -4,16 +4,25 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-# Mark both dependencies as optional so they are not included by default
+# Mark dependencies as optional so they are not included by default
+
+## Engine
+tokio = { workspace = true, optional = true }
+shell-words = "1.1.0"
+
+## Caching
+serde_json = { version = "1.0.154", optional = true }
+blake3 = { version = "1.8.7", optional = true }
+walkdir = { version = "2.5.0", optional = true }
+
+## Config
 serde = { version = "1.0.229", optional = true, features = ["derive"] }
 serde_yaml = { version = "0.9.33", optional = true }
-tokio = { workspace = true, optional = true }
 
 [features]
 default = []
 
-# Enabling 'config' activates the optional 'serde' and 'serde_yaml' dependencies
 config = ["dep:serde", "dep:serde_yaml"]
-
 engine = ["config", "dep:tokio"]
 streaming = ["engine"]
+caching = ["engine", "dep:serde", "dep:serde_json", "dep:blake3", "dep:walkdir"]

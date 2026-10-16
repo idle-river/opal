@@ -11,7 +11,7 @@ consumed as structured streaming events through the core library.
 - Dependency-aware execution for jobs
 - Concurrent execution of independent jobs
 - Configurable maximum number of concurrent jobs
-- Streaming lifecycle, stdout, and stderr events
+- Streaming lifecycle, stdout, and stderr events, with colors
 
 ## Requirements
 
@@ -149,6 +149,11 @@ engine.init_program_streaming(program, callback).await?;
 Use `init_program` instead when structured callbacks are not needed. Without a
 callback, Opal writes standard output and lifecycle messages to stdout and
 standard error messages to stderr.
+
+The main CLI additonally uses colored to enhance the experience of streaming logs,
+however it is not implemented at all in opal-core, however `opal-core` providers a
+helper function at `engine::task_color_index` if you would like to implement a
+similar version.
 
 ## Using `opal-core`
 

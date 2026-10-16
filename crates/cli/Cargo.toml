@@ -5,10 +5,10 @@ edition = "2024"
 
 [dependencies]
 tokio = { workspace = true }
-opal-core = { workspace = true, features = ["config", "engine", "streaming"] }
+opal-core = { workspace = true, features = ["config", "engine", "streaming", "caching"] }
 clap = { version = "4.6.7", features = ["derive"] }
+colored = "3.1.1"
 
 [[bin]]
 name = "opal"
 path = "./src/main.rs"
-
