@@ -154,11 +154,11 @@ standard error messages to stderr.
 
 `opal-core` is split into feature-gated capabilities:
 
-| Feature | Enables |
-| --- | --- |
-| `config` | `Program::from_file` and YAML deserialization |
-| `engine` | Asynchronous program execution; also enables `config` |
-| `streaming` | Streaming execution support; also enables `engine` |
+| Feature     | Enables                                               |
+| ----------- | ----------------------------------------------------- |
+| `config`    | `Program::from_file` and YAML deserialization         |
+| `engine`    | Asynchronous program execution; also enables `config` |
+| `streaming` | Streaming execution support; also enables `engine`    |
 
 Add the library to a Cargo project with the features you need:
 
