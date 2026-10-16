@@ -11,4 +11,3 @@ clap = { version = "4.6.7", features = ["derive"] }
 [[bin]]
 name = "opal"
 path = "./src/main.rs"
-

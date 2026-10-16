@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "config", derive(serde::Serialize, serde::Deserialize))]
 pub struct Task {
     pub name: String,
+    pub envs: Option<HashMap<String, String>>,
     #[cfg_attr(feature = "config", serde(default))]
     pub depends: Vec<String>,
     pub steps: Vec<Step>,

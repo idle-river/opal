@@ -1,4 +1,5 @@
 use crate::{Error, Step, Task, config::Program};
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -160,7 +161,14 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
     job.state = ExecState::Running;
 
     for step in &job.task.steps {
-        let mut cmd = command_for_step(step);
+        let mut cmd = match command_for_step(step, job.task.envs.as_ref()) {
+            Ok(command) => command,
+            Err(message) => {
+                emit(&job, step, LogStream::Stderr, message.clone());
+                job.state = ExecState::Failed;
+                return Err(message);
+            }
+        };
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         emit(
             &job,
@@ -294,24 +302,38 @@ fn emit(job: &RunningTask, step: &Step, stream: LogStream, message: String) {
     }
 }
 
-fn command_for_step(step: &Step) -> tokio::process::Command {
-    let (executable, args) = command_parts(step);
+fn command_for_step(
+    step: &Step,
+    env_vars: Option<&HashMap<String, String>>,
+) -> Result<tokio::process::Command, String> {
+    let (executable, args) = command_parts(step)?;
     let mut command = tokio::process::Command::new(executable);
     command.args(args);
 
-    command
-}
-
-fn command_parts(step: &Step) -> (&str, Vec<&str>) {
-    let mut parts = step.command.split_whitespace();
-    let executable = parts.next().unwrap_or_default();
-    let mut args = parts.collect::<Vec<_>>();
-
-    if let Some(explicit_args) = &step.args {
-        args.extend(explicit_args.iter().map(String::as_str));
+    if let Some(envs) = env_vars {
+        for (key, val) in envs {
+            command.env(key, val);
+        }
     }
 
-    (executable, args)
+    Ok(command)
+}
+
+fn command_parts(step: &Step) -> Result<(String, Vec<String>), String> {
+    let mut parts = shell_words::split(&step.command)
+        .map_err(|error| format!("invalid command '{}': {error}", step.command))?;
+
+    let executable = parts
+        .drain(..1)
+        .next()
+        .ok_or_else(|| "command cannot be empty".to_owned())?;
+
+    let mut args = parts;
+    if let Some(explicit_args) = &step.args {
+        args.extend(explicit_args.iter().cloned());
+    }
+
+    Ok((executable, args))
 }
 
 #[cfg(test)]
@@ -324,6 +346,7 @@ mod tests {
     fn task(name: &str, depends: &[&str], command: &str) -> Task {
         Task {
             name: name.to_owned(),
+            envs: None,
             depends: depends
                 .iter()
                 .map(|dependency| (*dependency).to_owned())
@@ -344,7 +367,7 @@ mod tests {
             args: None,
         };
 
-        let (executable, args) = command_parts(&step);
+        let (executable, args) = command_parts(&step).unwrap();
         assert_eq!(executable, "cargo");
         assert_eq!(args, ["build", "--release"]);
     }
@@ -361,9 +384,22 @@ mod tests {
             ]),
         };
 
-        let (executable, args) = command_parts(&step);
+        let (executable, args) = command_parts(&step).unwrap();
         assert_eq!(executable, "cargo");
         assert_eq!(args, ["clippy", "--", "-D", "warnings"]);
+    }
+
+    #[test]
+    fn preserves_quoted_shell_command_as_single_argument() {
+        let step = Step {
+            name: "echo env".to_owned(),
+            command: "bash -c \"echo $API_KEY\"".to_owned(),
+            args: None,
+        };
+
+        let (executable, args) = command_parts(&step).unwrap();
+        assert_eq!(executable, "bash");
+        assert_eq!(args, ["-c", "echo $API_KEY"]);
     }
 
     #[tokio::test]
@@ -377,6 +413,7 @@ mod tests {
             name: "program".to_owned(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                envs: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
@@ -408,6 +445,7 @@ mod tests {
             name: "program".to_owned(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                envs: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),

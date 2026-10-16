@@ -1,7 +1,7 @@
+use clap::Parser;
+use opal_core::config::Program;
 use std::process;
 use std::sync::Arc;
-
-use clap::Parser;
 
 const CONFIG_FILE: &str = ".opal.yaml";
 const SAMPLE_YAML: &str = include_str!("../../../sample.yaml");
@@ -21,23 +21,9 @@ async fn main() {
                 .unwrap_or_else(|e| panic!("Failed to write to file: {e}"));
         }
         Cli::Run { file } => {
-            use opal_core::config::Program;
             use opal_core::engine::{ExecutionEngine, LogStream};
 
-            let prog = if let Some(f) = file {
-                Program::from_file(&f).unwrap_or_else(|e| {
-                    eprintln!("Failed to read from {} with an error of: {}", f, e);
-                    process::exit(1)
-                })
-            } else {
-                Program::from_file(CONFIG_FILE).unwrap_or_else(|e| {
-                    eprintln!(
-                        "Failed to read from {} with an error of: {}",
-                        CONFIG_FILE, e
-                    );
-                    process::exit(1)
-                })
-            };
+            let prog = extract_program(file);
 
             let mut engine = ExecutionEngine::default();
 
@@ -53,6 +39,29 @@ async fn main() {
             if let Err(error) = engine.init_program_streaming(prog, callback).await {
                 eprintln!("Program execution failed: {error}");
                 process::exit(1);
+            }
+        }
+        Cli::Check { file } => {
+            use std::fs;
+            use std::path::PathBuf;
+
+            let path = PathBuf::from(file.clone().unwrap_or(".opal.yaml".to_string()));
+
+            if !fs::exists(&path).unwrap_or(false) {
+                println!("{} is not accessable; cannot check", path.display());
+                process::exit(1);
+            }
+
+            if check_program(file.as_ref()) {
+                println!(
+                    "Config in {} is valid",
+                    file.unwrap_or(CONFIG_FILE.to_string())
+                )
+            } else {
+                println!(
+                    "Config in {} is NOT VALID",
+                    file.unwrap_or(CONFIG_FILE.to_string())
+                )
             }
         }
     }
@@ -84,10 +93,40 @@ mod tests {
     }
 }
 
+fn extract_program(file: Option<String>) -> Program {
+    if let Some(f) = file {
+        Program::from_file(&f).unwrap_or_else(|e| {
+            eprintln!("Failed to read from {} with an error of: {}", f, e);
+            process::exit(1)
+        })
+    } else {
+        Program::from_file(CONFIG_FILE).unwrap_or_else(|e| {
+            eprintln!(
+                "Failed to read from {} with an error of: {}",
+                CONFIG_FILE, e
+            );
+            process::exit(1)
+        })
+    }
+}
+
+fn check_program(file: Option<&String>) -> bool {
+    if let Some(f) = file {
+        Program::from_file(f)
+    } else {
+        Program::from_file(CONFIG_FILE)
+    }
+    .is_ok()
+}
+
 #[derive(Parser)]
 enum Cli {
     Init,
     Run {
+        #[arg(long)]
+        file: Option<String>,
+    },
+    Check {
         #[arg(long)]
         file: Option<String>,
     },
