@@ -31,7 +31,7 @@ async fn main() {
                 process::exit(1);
             });
         }
-        Cli::Run { file } => {
+        Cli::Run { file, task } => {
             use opal_core::engine::{ExecutionEngine, LogStream};
 
             let prog = extract_program(file);
@@ -47,7 +47,7 @@ async fn main() {
                 }
             });
 
-            if let Err(error) = engine.init_program_streaming(prog, callback).await {
+            if let Err(error) = engine.init_program_streaming(prog, callback, task).await {
                 eprintln!("Program execution failed: {error}");
                 process::exit(1);
             }
@@ -154,6 +154,9 @@ enum Cli {
     Run {
         #[arg(long)]
         file: Option<String>,
+
+        #[arg()]
+        task: Option<String>,
     },
     Check {
         #[arg(long)]

@@ -80,24 +80,42 @@ impl ExecutionEngine {
         }
     }
 
-    pub async fn init_program(&mut self, prog: Program) -> Result<(), Error> {
-        self.run_program(prog, None).await
+    pub async fn init_program(
+        &mut self,
+        prog: Program,
+        specific_task: Option<String>,
+    ) -> Result<(), Error> {
+        self.run_program(prog, None, specific_task).await
     }
 
     pub async fn init_program_streaming(
         &mut self,
         prog: Program,
         callback: LogCallback,
+        specific_task: Option<String>,
     ) -> Result<(), Error> {
-        self.run_program(prog, Some(callback)).await
+        self.run_program(prog, Some(callback), specific_task).await
     }
 
-    async fn run_program(&self, prog: Program, callback: Option<LogCallback>) -> Result<(), Error> {
+    async fn run_program(
+        &self,
+        prog: Program,
+        callback: Option<LogCallback>,
+        task: Option<String>,
+    ) -> Result<(), Error> {
         use std::collections::HashMap;
+        let mut pending: HashMap<String, Task> = HashMap::new();
 
-        let mut pending = HashMap::new();
-        for task in prog.jobs {
-            if pending.insert(task.name.clone(), task).is_some() {
+        let jobs = prog.jobs.iter().filter(|job| {
+            if let Some(t) = &task {
+                &job.name == t
+            } else {
+                true
+            }
+        });
+
+        for job in jobs {
+            if pending.insert(job.name.clone(), job.clone()).is_some() {
                 return Err(Box::new(std::io::Error::other("job names must be unique")));
             }
         }
@@ -445,7 +463,7 @@ mod tests {
         };
 
         ExecutionEngine::default()
-            .init_program_streaming(program, callback)
+            .init_program_streaming(program, callback, None)
             .await
             .unwrap();
 
@@ -477,7 +495,7 @@ mod tests {
         };
 
         let result = ExecutionEngine::default()
-            .init_program_streaming(program, callback)
+            .init_program_streaming(program, callback, None)
             .await;
 
         assert!(result.is_err());
@@ -498,7 +516,7 @@ mod tests {
         let started = Instant::now();
 
         ExecutionEngine::new(2, 1)
-            .init_program(program)
+            .init_program(program, None)
             .await
             .unwrap();
 
@@ -522,7 +540,7 @@ mod tests {
         };
 
         ExecutionEngine::new(2, 1)
-            .init_program(program)
+            .init_program(program, None)
             .await
             .unwrap();
 
@@ -547,7 +565,7 @@ mod tests {
 
         assert!(
             ExecutionEngine::new(2, 1)
-                .init_program_streaming(program, callback)
+                .init_program_streaming(program, callback, None)
                 .await
                 .is_err()
         );
