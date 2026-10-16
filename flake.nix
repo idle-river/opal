@@ -56,6 +56,14 @@
           default = naerskLib.buildPackage {
             version = "0.1.0";
             src = ./.;
+
+            cargoBuildOptions =
+              opts:
+              opts
+              ++ [
+                "-p"
+                "cli"
+              ];
           };
         }
       );
