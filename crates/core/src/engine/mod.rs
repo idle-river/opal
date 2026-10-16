@@ -200,14 +200,15 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
     job.state = ExecState::Running;
 
     for step in &job.task.steps {
-        let mut cmd = match command_for_step(step, job.task.envs.as_ref()) {
-            Ok(command) => command,
-            Err(message) => {
-                emit(&job, step, LogStream::Stderr, message.clone());
-                job.state = ExecState::Failed;
-                return Err(message);
-            }
-        };
+        let mut cmd =
+            match command_for_step(step, job.task.envs.as_ref(), job.task.working_dir.as_ref()) {
+                Ok(command) => command,
+                Err(message) => {
+                    emit(&job, step, LogStream::Stderr, message.clone());
+                    job.state = ExecState::Failed;
+                    return Err(message);
+                }
+            };
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         emit(
             &job,
@@ -344,6 +345,7 @@ fn emit(job: &RunningTask, step: &Step, stream: LogStream, message: String) {
 fn command_for_step(
     step: &Step,
     env_vars: Option<&HashMap<String, String>>,
+    working_dir: Option<&String>,
 ) -> Result<tokio::process::Command, String> {
     let (executable, args) = command_parts(step)?;
     let mut command = tokio::process::Command::new(executable);
@@ -353,6 +355,10 @@ fn command_for_step(
         for (key, val) in envs {
             command.env(key, val);
         }
+    }
+
+    if let Some(work_dir) = working_dir {
+        command.current_dir(work_dir);
     }
 
     Ok(command)
@@ -386,6 +392,7 @@ mod tests {
         Task {
             name: name.to_owned(),
             envs: None,
+            working_dir: None,
             depends: depends
                 .iter()
                 .map(|dependency| (*dependency).to_owned())
@@ -453,6 +460,7 @@ mod tests {
             jobs: vec![Task {
                 name: "task".to_owned(),
                 envs: None,
+                working_dir: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
@@ -485,6 +493,7 @@ mod tests {
             jobs: vec![Task {
                 name: "task".to_owned(),
                 envs: None,
+                working_dir: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
