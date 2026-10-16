@@ -6,9 +6,17 @@ pub struct Task {
     pub name: String,
     pub envs: Option<HashMap<String, String>>,
     pub working_dir: Option<String>,
+    pub cache: Option<CacheOptions>,
     #[cfg_attr(feature = "config", serde(default))]
     pub depends: Vec<String>,
     pub steps: Vec<Step>,
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "config", derive(serde::Serialize, serde::Deserialize))]
+pub struct CacheOptions {
+    inputs: Vec<String>, // Regex patterns
+    output: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
