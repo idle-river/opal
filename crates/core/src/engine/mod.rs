@@ -1,4 +1,5 @@
 use crate::{Error, Step, Task, config::Program};
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -18,6 +19,27 @@ pub struct LogEvent {
     pub step_name: String,
     pub stream: LogStream,
     pub message: String,
+}
+
+pub fn program_color_seed(program_name: &str) -> u64 {
+    let mut hash = 14695981039346656037_u64;
+    for byte in program_name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1099511628211_u64);
+    }
+    hash
+}
+
+pub fn program_color_index(program_name: &str, palette_size: usize) -> usize {
+    if palette_size == 0 {
+        return 0;
+    }
+
+    (program_color_seed(program_name) % palette_size as u64) as usize
+}
+
+pub fn task_color_index(task_name: &str, palette_size: usize) -> usize {
+    program_color_index(task_name, palette_size)
 }
 
 pub type LogCallback = Arc<dyn Fn(LogEvent) + Send + Sync + 'static>;
@@ -58,24 +80,42 @@ impl ExecutionEngine {
         }
     }
 
-    pub async fn init_program(&mut self, prog: Program) -> Result<(), Error> {
-        self.run_program(prog, None).await
+    pub async fn init_program(
+        &mut self,
+        prog: Program,
+        specific_task: Option<String>,
+    ) -> Result<(), Error> {
+        self.run_program(prog, None, specific_task).await
     }
 
     pub async fn init_program_streaming(
         &mut self,
         prog: Program,
         callback: LogCallback,
+        specific_task: Option<String>,
     ) -> Result<(), Error> {
-        self.run_program(prog, Some(callback)).await
+        self.run_program(prog, Some(callback), specific_task).await
     }
 
-    async fn run_program(&self, prog: Program, callback: Option<LogCallback>) -> Result<(), Error> {
+    async fn run_program(
+        &self,
+        prog: Program,
+        callback: Option<LogCallback>,
+        task: Option<String>,
+    ) -> Result<(), Error> {
         use std::collections::HashMap;
+        let mut pending: HashMap<String, Task> = HashMap::new();
 
-        let mut pending = HashMap::new();
-        for task in prog.jobs {
-            if pending.insert(task.name.clone(), task).is_some() {
+        let jobs = prog.jobs.iter().filter(|job| {
+            if let Some(t) = &task {
+                &job.name == t
+            } else {
+                true
+            }
+        });
+
+        for job in jobs {
+            if pending.insert(job.name.clone(), job.clone()).is_some() {
                 return Err(Box::new(std::io::Error::other("job names must be unique")));
             }
         }
@@ -160,7 +200,15 @@ async fn execute_job(mut job: RunningTask) -> Result<(), String> {
     job.state = ExecState::Running;
 
     for step in &job.task.steps {
-        let mut cmd = command_for_step(step);
+        let mut cmd =
+            match command_for_step(step, job.task.envs.as_ref(), job.task.working_dir.as_ref()) {
+                Ok(command) => command,
+                Err(message) => {
+                    emit(&job, step, LogStream::Stderr, message.clone());
+                    job.state = ExecState::Failed;
+                    return Err(message);
+                }
+            };
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         emit(
             &job,
@@ -294,29 +342,48 @@ fn emit(job: &RunningTask, step: &Step, stream: LogStream, message: String) {
     }
 }
 
-fn command_for_step(step: &Step) -> tokio::process::Command {
-    let (executable, args) = command_parts(step);
+fn command_for_step(
+    step: &Step,
+    env_vars: Option<&HashMap<String, String>>,
+    working_dir: Option<&String>,
+) -> Result<tokio::process::Command, String> {
+    let (executable, args) = command_parts(step)?;
     let mut command = tokio::process::Command::new(executable);
     command.args(args);
 
-    command
-}
-
-fn command_parts(step: &Step) -> (&str, Vec<&str>) {
-    let mut parts = step.command.split_whitespace();
-    let executable = parts.next().unwrap_or_default();
-    let mut args = parts.collect::<Vec<_>>();
-
-    if let Some(explicit_args) = &step.args {
-        args.extend(explicit_args.iter().map(String::as_str));
+    if let Some(envs) = env_vars {
+        for (key, val) in envs {
+            command.env(key, val);
+        }
     }
 
-    (executable, args)
+    if let Some(work_dir) = working_dir {
+        command.current_dir(work_dir);
+    }
+
+    Ok(command)
+}
+
+fn command_parts(step: &Step) -> Result<(String, Vec<String>), String> {
+    let mut parts = shell_words::split(&step.command)
+        .map_err(|error| format!("invalid command '{}': {error}", step.command))?;
+
+    let executable = parts
+        .drain(..1)
+        .next()
+        .ok_or_else(|| "command cannot be empty".to_owned())?;
+
+    let mut args = parts;
+    if let Some(explicit_args) = &step.args {
+        args.extend(explicit_args.iter().cloned());
+    }
+
+    Ok((executable, args))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ExecutionEngine, LogEvent, command_parts};
+    use super::{ExecutionEngine, LogEvent, command_parts, program_color_index};
     use crate::{Step, Task, config::Program};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -324,6 +391,8 @@ mod tests {
     fn task(name: &str, depends: &[&str], command: &str) -> Task {
         Task {
             name: name.to_owned(),
+            envs: None,
+            working_dir: None,
             depends: depends
                 .iter()
                 .map(|dependency| (*dependency).to_owned())
@@ -344,7 +413,7 @@ mod tests {
             args: None,
         };
 
-        let (executable, args) = command_parts(&step);
+        let (executable, args) = command_parts(&step).unwrap();
         assert_eq!(executable, "cargo");
         assert_eq!(args, ["build", "--release"]);
     }
@@ -361,9 +430,22 @@ mod tests {
             ]),
         };
 
-        let (executable, args) = command_parts(&step);
+        let (executable, args) = command_parts(&step).unwrap();
         assert_eq!(executable, "cargo");
         assert_eq!(args, ["clippy", "--", "-D", "warnings"]);
+    }
+
+    #[test]
+    fn preserves_quoted_shell_command_as_single_argument() {
+        let step = Step {
+            name: "echo env".to_owned(),
+            command: "bash -c \"echo $API_KEY\"".to_owned(),
+            args: None,
+        };
+
+        let (executable, args) = command_parts(&step).unwrap();
+        assert_eq!(executable, "bash");
+        assert_eq!(args, ["-c", "echo $API_KEY"]);
     }
 
     #[tokio::test]
@@ -377,6 +459,8 @@ mod tests {
             name: "program".to_owned(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                envs: None,
+                working_dir: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
@@ -387,7 +471,7 @@ mod tests {
         };
 
         ExecutionEngine::default()
-            .init_program_streaming(program, callback)
+            .init_program_streaming(program, callback, None)
             .await
             .unwrap();
 
@@ -408,6 +492,8 @@ mod tests {
             name: "program".to_owned(),
             jobs: vec![Task {
                 name: "task".to_owned(),
+                envs: None,
+                working_dir: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
@@ -418,7 +504,7 @@ mod tests {
         };
 
         let result = ExecutionEngine::default()
-            .init_program_streaming(program, callback)
+            .init_program_streaming(program, callback, None)
             .await;
 
         assert!(result.is_err());
@@ -439,7 +525,7 @@ mod tests {
         let started = Instant::now();
 
         ExecutionEngine::new(2, 1)
-            .init_program(program)
+            .init_program(program, None)
             .await
             .unwrap();
 
@@ -463,7 +549,7 @@ mod tests {
         };
 
         ExecutionEngine::new(2, 1)
-            .init_program(program)
+            .init_program(program, None)
             .await
             .unwrap();
 
@@ -488,7 +574,7 @@ mod tests {
 
         assert!(
             ExecutionEngine::new(2, 1)
-                .init_program_streaming(program, callback)
+                .init_program_streaming(program, callback, None)
                 .await
                 .is_err()
         );
@@ -499,5 +585,15 @@ mod tests {
                 .iter()
                 .any(|event| event.message == "should-not-run")
         );
+    }
+
+    #[test]
+    fn program_color_index_is_deterministic_and_bounded() {
+        let first = program_color_index("build", 8);
+        let second = program_color_index("build", 8);
+
+        assert_eq!(first, second);
+        assert!(first < 8);
+        assert_eq!(program_color_index("build", 0), 0);
     }
 }
