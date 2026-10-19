@@ -393,7 +393,6 @@ mod tests {
             name: name.to_owned(),
             envs: None,
             working_dir: None,
-            cache: None,
             depends: depends
                 .iter()
                 .map(|dependency| (*dependency).to_owned())
@@ -462,7 +461,6 @@ mod tests {
                 name: "task".to_owned(),
                 envs: None,
                 working_dir: None,
-                cache: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
@@ -496,7 +494,6 @@ mod tests {
                 name: "task".to_owned(),
                 envs: None,
                 working_dir: None,
-                cache: None,
                 depends: Vec::new(),
                 steps: vec![Step {
                     name: "step".to_owned(),
