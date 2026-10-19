@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 tokio = { workspace = true }
-opal-core = { workspace = true, features = ["config", "engine", "streaming", "caching"] }
+opal-core = { workspace = true, features = ["config", "engine", "streaming"] }
 clap = { version = "4.6.7", features = ["derive"] }
 colored = "3.1.1"
 
